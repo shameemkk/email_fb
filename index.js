@@ -234,6 +234,49 @@ function extractEmails(html) {
   return [...new Set(emails)]; // Remove duplicates
 }
 
+async function extractEmailsFromSpanLocators(page) {
+  if (!page || typeof page.locator !== 'function') {
+    return [];
+  }
+
+  try {
+    const spans = await page.locator('//span[contains(text(), "@")]').all();
+    if (!spans.length) {
+      return [];
+    }
+
+    const normalizeEmail = (value) => value.trim();
+    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+    const spanEmails = new Set();
+
+    for (const span of spans) {
+      let textContent = '';
+      try {
+        textContent = await span.innerText();
+      } catch {
+        continue;
+      }
+
+      const trimmed = textContent.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      const matches = trimmed.match(emailRegex);
+      if (!matches) {
+        continue;
+      }
+
+      matches.forEach((email) => spanEmails.add(normalizeEmail(email)));
+    }
+
+    return Array.from(spanEmails);
+  } catch (error) {
+    console.warn(`[Playwright] Failed to inspect span elements for emails: ${error.message}`);
+    return [];
+  }
+}
+
 // URL cleaning function to remove hash fragments
 function cleanUrl(url) {
   try {
@@ -646,8 +689,13 @@ async function scrapeUrl(url, depth, visitedUrls) {
         };
       }, MAX_LINKS_PER_PAGE);
 
-      const pageEmails = Array.isArray(evaluationResult?.emails) ? evaluationResult.emails : [];
+      let pageEmails = Array.isArray(evaluationResult?.emails) ? [...evaluationResult.emails] : [];
       const candidateLinks = Array.isArray(evaluationResult?.candidateLinks) ? evaluationResult.candidateLinks : [];
+
+      const spanEmails = await extractEmailsFromSpanLocators(page);
+      if (spanEmails.length > 0) {
+        pageEmails = Array.from(new Set([...pageEmails, ...spanEmails]));
+      }
 
       if (pageEmails.length > 0) {
         result.emails.push(...pageEmails);
